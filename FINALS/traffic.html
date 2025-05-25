@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pose Tracking</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #f0f2f5;
+      padding: 20px;
+    }
+    video, canvas {
+      border-radius: 8px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    }
+    #status, #poseLabel, #recordStatus {
+      margin-top: 12px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    button {
+      margin-top: 15px;
+      padding: 10px 15px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      background-color: #2196f3;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #1769aa;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Improved Pose Tracking with Classification</h1>
+<video id="video" width="600" height="450" autoplay muted playsinline></video>
+<canvas id="output" width="600" height="450"></canvas>
+
+<div id="status">Loading model...</div>
+<div id="poseLabel">Pose: --</div>
+<div id="recordStatus">Recording: OFF</div>
+<button id="toggleRecord">Start Recording</button>
+<button id="downloadData" disabled>Download Recorded Data</button>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.7.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('output');
+const ctx = canvas.getContext('2d');
+const statusText = document.getElementById('status');
+const poseLabel = document.getElementById('poseLabel');
+const recordStatus = document.getElementById('recordStatus');
+const toggleRecordBtn = document.getElementById('toggleRecord');
+const downloadBtn = document.getElementById('downloadData');
+
+let recording = false;
+let recordedPoses = [];
+let detector;
+
+async function setupCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      width: 600,
+      height: 450,
+      facingMode: 'user'
+    },
+    audio: false
+  });
+  video.srcObject = stream;
+  return new Promise(resolve => {
+    video.onloadedmetadata = () => resolve(video);
+  });
+}
+
+function drawKeypoints(keypoints) {
+  keypoints.forEach(k => {
+    if (k.score > 0.5) {
+      ctx.beginPath();
+      ctx.arc(k.x, k.y, 6, 0, 2 * Math.PI);
+      ctx.fillStyle = 'aqua';
+      ctx.fill();
+    }
+  });
+}
+
+function drawSkeleton(keypoints) {
+  const adjacentPairs = poseDetection.util.getAdjacentPairs(poseDetection.SupportedModels.MoveNet);
+  adjacentPairs.forEach(([i, j]) => {
+    const kp1 = keypoints[i], kp2 = keypoints[j];
+    if (kp1.score > 0.5 && kp2.score > 0.5) {
+      ctx.beginPath();
+      ctx.moveTo(kp1.x, kp1.y);
+      ctx.lineTo(kp2.x, kp2.y);
+      ctx.strokeStyle = 'lime';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  });
+}
+
+function calculateAngle(A, B, C) {
+  const AB = { x: B.x - A.x, y: B.y - A.y };
+  const CB = { x: B.x - C.x, y: B.y - C.y };
+  const dot = AB.x * CB.x + AB.y * CB.y;
+  const magAB = Math.sqrt(AB.x ** 2 + AB.y ** 2);
+  const magCB = Math.sqrt(CB.x ** 2 + CB.y ** 2);
+  const angle = Math.acos(dot / (magAB * magCB));
+  return angle * (180 / Math.PI);
+}
+
+function distance(p1, p2) {
+  return Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+}
+
+function classifyPose(keypoints) {
+  const key = name => keypoints.find(k => k.name === name);
+  const lh = key('left_hip'), rh = key('right_hip');
+  const lk = key('left_knee'), rk = key('right_knee');
+  const la = key('left_ankle'), ra = key('right_ankle');
+  const ls = key('left_shoulder'), rs = key('right_shoulder');
+  const lw = key('left_wrist'), rw = key('right_wrist');
+
+  if (!(lh && rh && lk && rk && la && ra && ls && rs && lw && rw)) return 'Unknown';
+
+  const avgHipY = (lh.y + rh.y) / 2;
+  const avgKneeY = (lk.y + rk.y) / 2;
+  const avgAnkleY = (la.y + ra.y) / 2;
+  const avgShoulderY = (ls.y + rs.y) / 2;
+
+  const leftKneeAngle = calculateAngle(lh, lk, la);
+  const rightKneeAngle = calculateAngle(rh, rk, ra);
+
+  const verticalAligned = avgShoulderY < avgHipY && avgHipY < avgKneeY && avgKneeY < avgAnkleY;
+  const liftedRight = rk.y < rh.y && distance(ra, lk) < 80;
+  const liftedLeft = lk.y < lh.y && distance(la, rk) < 80;
+  const wristsTogether = distance(lw, rw) < 80 && lw.y < avgShoulderY && rw.y < avgShoulderY;
+
+  if ((liftedRight || liftedLeft) && wristsTogether) return 'Tree Pose';
+  if (leftKneeAngle < 120 && rightKneeAngle < 120 && avgHipY > avgKneeY - 20) return 'Sitting';
+  if (leftKneeAngle > 165 && rightKneeAngle > 165 && verticalAligned) return 'Standing';
+  return 'Unknown';
+}
+
+async function runDetector() {
+  statusText.textContent = 'Loading MoveNet model...';
+  detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+    modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+    enableSmoothing: true
+  });
+  statusText.textContent = 'Model loaded. Detecting poses...';
+
+  async function detect() {
+    const poses = await detector.estimatePoses(video);
+    if (poses.length > 0) {
+      const keypoints = poses[0].keypoints;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      drawKeypoints(keypoints);
+      drawSkeleton(keypoints);
+
+      const poseName = classifyPose(keypoints);
+      poseLabel.textContent = 'Pose: ' + poseName;
+
+      if (recording) {
+        recordedPoses.push({
+          timestamp: Date.now(),
+          pose: keypoints,
+          classifiedPose: poseName
+        });
+      }
+    }
+    requestAnimationFrame(detect);
+  }
+  detect();
+}
+
+toggleRecordBtn.addEventListener('click', () => {
+  recording = !recording;
+  recordStatus.textContent = 'Recording: ' + (recording ? 'ON' : 'OFF');
+  toggleRecordBtn.textContent = recording ? 'Stop Recording' : 'Start Recording';
+  if (!recording) downloadBtn.disabled = recordedPoses.length === 0;
+});
+
+downloadBtn.addEventListener('click', () => {
+  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(recordedPoses, null, 2));
+  const anchor = document.createElement('a');
+  anchor.setAttribute('href', dataStr);
+  anchor.setAttribute('download', 'pose_data.json');
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+});
+
+(async () => {
+  await setupCamera();
+  video.play();
+  await runDetector();
+})();
+</script>
+
+</body>
+</html>

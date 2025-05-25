@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geometric Properties</title>
+    <link rel="stylesheet" href="hehecss.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Image Orientation, Histogram, & Binary Projection</h1>
+        <input type="file" id="imageInput" accept="image/*" class="button">
+        <div id="images-container">
+            <canvas id="originalCanvas"></canvas>
+            <canvas id="editedCanvas"></canvas>
+        </div>
+        
+        <div class="control-group">
+            <button onclick="toggleHistogram()" class="button">Show/Hide Histogram</button>
+        </div>
+        
+        <div id="histogramContainer" style="display: none;">
+            <canvas id="histogramCanvas" width="600" height="600" style="border:1px solid #ccc;"></canvas>
+        </div>
+        
+
+           <!-- Existing control groups stay untouched -->
+
+           <div class="control-group">
+            <button onclick="rotateRight()" class="button">Rotate Right</button>
+            <button onclick="rotateLeft()" class="button">Rotate Left</button>
+            <button onclick="mirrorVertical()" class="button">Vertical Mirror</button>
+            <button onclick="mirrorHorizontal()" class="button">Horizontal Mirror</button>
+        </div>
+        
+<div class="control-group">
+    <button onclick="binaryVerticalProjection()" class="button">Vertical Projection</button>
+    <button onclick="horizontalProjection()" class="button">Horizontal Projection</button>
+    <button click="translate()" class="button"> Translate</button>
+    
+
+</div>
+
+            
+            <button onclick="resetImage()" class="button">Reset Image</button>
+            <button onclick="saveImage()" class="button">Save Image</button>
+        </div>
+    </div>
+
+<div class="sidebar">
+    <h2>Filters</h2>
+    <button onclick="applySmooth()" class="button">Smooth</button>
+    <button onclick="applyGaussianBlur()" class="button">Gaussian Blur</button>
+    <button onclick="applyMeanRemoval()" class="button">Mean Removal</button>
+    <button onclick="applySharpen()" class="button">Sharpen</button>
+    <button onclick="applyEmboss()" class="button">Emboss</button>
+</div>
+
+    <script src="opencv.js" async onload="onOpenCvReady();"></script>
+    <script src="index.js"></script>
+</body>
+</html>
